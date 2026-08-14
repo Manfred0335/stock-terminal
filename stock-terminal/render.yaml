@@ -1,0 +1,30 @@
+# Render Blueprint — deploys the terminal as an always-on web service.
+# On Render: New → Blueprint → connect this repo. You'll be prompted to fill
+# in the secret keys (marked sync:false). See DEPLOY.md for the full walkthrough.
+services:
+  - type: web
+    name: equity-analytics-terminal
+    runtime: node
+    plan: free            # change to "starter" ($7/mo) to avoid the free-tier sleep
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /api/health
+    envVars:
+      - key: TWELVEDATA_API_KEY
+        sync: false        # paste in Render dashboard
+      - key: FINNHUB_API_KEY
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false        # set to your chat id so alerts survive restarts
+      - key: DASH_PASSWORD
+        sync: false        # optional: password-protect the public URL
+      - key: DIGEST_HOUR
+        value: "8"
+      - key: ALERT_INTERVAL_SECONDS
+        value: "45"
+      - key: TZ
+        value: Asia/Singapore
+      - key: SEC_USER_AGENT
+        value: Equity Analytics Terminal you@example.com
