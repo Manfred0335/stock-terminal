@@ -242,11 +242,13 @@
           </div>
         </div>
         <div class="card rounded-2xl p-5 fade-in">
-          <div class="flex items-center justify-between mb-4"><div class="flex items-center gap-2"><h3 class="font-semibold">AI Composite Score</h3><span id="scoreTk" class="text-[11px] text-muted"></span></div><a data-tab="rank" class="nav-link text-[11px] text-orchid hover:underline cursor-pointer">View full ranking →</a></div>
+          <div class="flex items-center justify-between mb-4"><div class="flex items-center gap-2 flex-wrap"><h3 class="font-semibold">AI Composite Score</h3><span id="scoreTk" class="text-[11px] text-muted"></span><span id="scoreConf" class="text-[10px] px-2 py-0.5 rounded-md border border-stroke text-muted"></span></div><a data-tab="rank" class="nav-link text-[11px] text-orchid hover:underline cursor-pointer">View full ranking →</a></div>
+          <p id="scoreWarn" class="text-[11px] text-amber mb-3 hidden"></p>
           <div class="flex flex-col md:flex-row items-center gap-6">
             <div class="text-center shrink-0"><p id="scoreBig" class="text-5xl font-extrabold tabular-nums leading-none">—</p><p id="scoreRating" class="text-xs font-bold uppercase tracking-wide mt-2">—</p></div>
             <div id="scoreFactors" class="flex-1 w-full grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-x-4 gap-y-3"></div>
           </div>
+          <p id="scorePeer" class="text-[11px] text-muted mt-3"></p>
         </div>
         <div class="card rounded-2xl p-5 fade-in">
           <div class="flex items-center justify-between mb-4"><div class="flex items-center gap-2"><h3 class="font-semibold">Latest Earnings</h3><span id="earnRepTk" class="text-[11px] text-muted"></span></div><span id="earnRepDate" class="text-[11px] text-muted border border-stroke rounded-md px-2 py-0.5">REPORT</span></div>
@@ -288,7 +290,7 @@
             </div>
             <div class="flex-1 relative h-[250px]"><canvas id="projChart"></canvas></div>
           </div>
-          <p class="text-[11px] text-muted mt-3 pt-3 border-t border-stroke">Extrapolates the historical price CAGR forward; the shaded band is a volatility-based range of outcomes. This is a naive model that assumes past growth simply continues — it is not a forecast, and it excludes dividends. Real returns depend on fundamentals, valuation and conditions that change.</p>
+          <p class="text-[11px] text-muted mt-3 pt-3 border-t border-stroke"><b>CAGR path</b> compounds the historical total-return rate (price growth + dividend) forward. <b>Monte Carlo</b> resamples the stock's real daily moves (fat tails, not a bell curve) with the growth rate shrunk halfway toward a ~7% market average so a recent hot streak doesn't extrapolate to the moon — the band shows the 10th–90th percentile range. Still a model, not a forecast; real returns depend on fundamentals and conditions that change.</p>
         </div>
         <div class="card rounded-2xl p-5 fade-in">
           <div class="flex items-center justify-between mb-3"><div><h3 class="font-semibold">Watchlist Heatmap</h3><p class="text-muted text-xs mt-0.5">Today's move across your watchlist · click a tile to open it</p></div><span class="text-[11px] text-muted border border-stroke rounded-md px-2 py-0.5">LIVE %</span></div>
@@ -653,6 +655,10 @@
         </div>
         <div id="rankList" class="space-y-3"></div>
         <div class="card rounded-2xl p-5 fade-in">
+          <div class="flex items-center justify-between mb-3"><div><h3 class="font-semibold">Signal Validation</h3><p class="text-muted text-xs mt-0.5">Does the momentum signal actually predict returns on your watchlist's history?</p></div><span class="text-[11px] text-muted border border-stroke rounded-md px-2 py-0.5">BACKTEST</span></div>
+          <div id="signalVal"></div>
+        </div>
+        <div class="card rounded-2xl p-5 fade-in">
           <div class="flex items-center justify-between mb-3"><h3 class="font-semibold">Scoring Framework</h3><span class="text-[11px] text-muted border border-stroke rounded-md px-2 py-0.5">METHODOLOGY</span></div>
           <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-x-6 gap-y-3 text-xs">
             <div><p class="font-semibold text-teal">Momentum <span class="text-muted font-normal">· 18%</span></p><p class="text-muted mt-0.5">3–6 month returns, price vs 50/200-day averages, RSI &amp; MACD trend.</p></div>
@@ -796,7 +802,7 @@ let liveTimer=null;
 /* =====================================================================
    REAL-DATA ADAPTER — talks to the backend API, falls back to simulation
    ===================================================================== */
-const FUND={}, NEWS={}, FILINGS={}, EARN={}, REC={}, INS={}, SENT={}, PEERS={}, METRICS={}, EREP={}, REAL=new Set();
+const FUND={}, NEWS={}, FILINGS={}, EARN={}, REC={}, INS={}, SENT={}, PEERS={}, METRICS={}, EREP={}, PEERMET={}, REAL=new Set();
 let BACKEND=true; // flips false if the API is unreachable (opened as a bare file)
 
 async function api(pathStr, tries=3){ let last;
@@ -827,7 +833,7 @@ function mapQuoteToMeta(q){ const bb=genBullBear(q);
     beta:q.beta||1, divYield:q.divYield||0, volume:q.volume||0, avgVolume:q.avgVolume||q.volume||0,
     high52:q.high52||q.price, low52:q.low52||q.price, sentiment:deriveSentiment(q),
     analystAvg:q.targetMean||q.price, rec:deriveRec(q), bull:bb.bull, bear:bb.bear,
-    bid:q.bid, ask:q.ask, real:true }; }
+    bid:q.bid, ask:q.ask, real:true, source:q.source||null, suspect:!!q.suspect, suspectReason:q.suspectReason||null }; }
 
 const mapBars=(a)=>a.map(b=>({t:new Date(b.t),o:b.o,h:b.h,l:b.l,c:b.c,v:b.v||0}));
 async function fetchSymbol(sym){
@@ -850,7 +856,8 @@ async function fetchExtras(sym){ if(!BACKEND) return; // earnings, rec trend, in
   try{ INS[sym]=await api('/api/insiders/'+sym); }catch(e){}
   try{ SENT[sym]=await api('/api/sentiment/'+sym); }catch(e){}
   try{ PEERS[sym]=await api('/api/peers/'+sym); }catch(e){}
-  try{ if(!METRICS[sym]) METRICS[sym]=await api('/api/metrics/'+sym); }catch(e){} }
+  try{ if(!METRICS[sym]) METRICS[sym]=await api('/api/metrics/'+sym); }catch(e){}
+  try{ if(!PEERMET[sym]) PEERMET[sym]=await api('/api/peer-metrics/'+sym); }catch(e){} }
 async function fetchMetrics(sym){ if(!BACKEND||METRICS[sym]) return; try{ METRICS[sym]=await api('/api/metrics/'+sym); }catch(e){} }
 /* ----- persisted state (watchlist + portfolio) ----- */
 let saveTimer=null;
@@ -1159,19 +1166,28 @@ function gaussianPair(){ let u=0,v=0; while(u===0)u=Math.random(); while(v===0)v
 function monteCarlo(sym){ const d=meta(sym); const price=d.price; const s=SERIES[sym]&&SERIES[sym].daily; if(!price||!s||s.length<120) return null;
   const c=s.map(b=>b.c); const rets=[]; for(let i=1;i<c.length;i++) rets.push(Math.log(c[i]/c[i-1]));
   const mu=rets.reduce((a,b)=>a+b,0)/rets.length; const sd=Math.sqrt(rets.reduce((a,b)=>a+(b-mu)*(b-mu),0)/rets.length);
+  // Drift shrinkage: blend the stock's historical annual drift 50/50 toward a
+  // long-run market prior (~7%), then clamp — so a recent bull run doesn't
+  // extrapolate to the moon. Dividends added for a total-return drift.
+  const histAnn=(Math.exp(mu*252)-1); const prior=0.07; const divY=(d.divYield||0)/100;
+  let shrunkAnn=clampN(0.5*histAnn+0.5*prior + divY, -0.15, 0.28);
+  const dailyDrift=Math.log(1+shrunkAnn)/252;
+  // Bootstrap: resample real historical daily moves (fat tails/skew), recentred
+  // so their mean is 0, then add the shrunk drift. More honest than a bell curve.
+  const resid=rets.map(x=>x-mu); const R=resid.length;
   const days=252*5, N=600; const steps=[]; for(let t=21;t<=days;t+=21) steps.push(t); const stepVals=steps.map(()=>[]);
-  for(let p=0;p<N;p++){ let lp=Math.log(price), si=0; for(let day=1;day<=days;day++){ lp+=mu+sd*gaussianPair(); if(si<steps.length&&steps[si]===day){ stepVals[si].push(Math.exp(lp)); si++; } } }
+  for(let p=0;p<N;p++){ let lp=Math.log(price), si=0; for(let day=1;day<=days;day++){ lp+=dailyDrift+resid[(Math.random()*R)|0]; if(si<steps.length&&steps[si]===day){ stepVals[si].push(Math.exp(lp)); si++; } } }
   const pct=(arr,q)=>{ const a=arr.slice().sort((x,y)=>x-y); return a[Math.floor(q*(a.length-1))]; };
   const p10=stepVals.map(a=>pct(a,0.1)),p25=stepVals.map(a=>pct(a,0.25)),p50=stepVals.map(a=>pct(a,0.5)),p75=stepVals.map(a=>pct(a,0.75)),p90=stepVals.map(a=>pct(a,0.9));
   const table={}; [1,2,3,5].forEach(y=>{ const idx=Math.min(steps.length-1,Math.round(252*y/21)-1); table[y]={p10:p10[idx],p50:p50[idx],p90:p90[idx]}; });
-  return {steps,p10,p25,p50,p75,p90,table,mu,sd,N}; }
+  return {steps,p10,p25,p50,p75,p90,table,mu:dailyDrift,sd,N,histAnn,shrunkAnn}; }
 function renderProjMC(){ const cv=el('projChart'); if(!cv) return; const t2=el('projTk'); if(t2) t2.textContent='· '+current;
   const d=meta(current); const price=d.price; const mc=monteCarlo(current);
   const cgEl=el('projCagr'), winEl=el('projWindow'), tbl=el('projTable');
   if(!mc){ if(cgEl){cgEl.textContent='—';cgEl.style.color='';} if(winEl) winEl.textContent='needs more price history'; if(tbl) tbl.innerHTML=''; killChart('proj'); return; }
   const annDrift=(Math.exp(mc.mu*252)-1)*100;
   if(cgEl){ cgEl.textContent=(annDrift>=0?'+':'')+annDrift.toFixed(1)+'%'; cgEl.style.color=annDrift>=0?'#22d3c5':'#e838c8'; }
-  if(winEl) winEl.textContent='median drift · '+mc.N+' simulations';
+  if(winEl) winEl.textContent='drift shrunk toward market · '+mc.N+' bootstrap paths';
   if(tbl) tbl.innerHTML=[1,2,3,5].map(y=>{ const t=mc.table[y]; return `<div class="text-xs"><div class="flex items-center justify-between"><span class="text-muted">+${y} yr median</span><span class="font-semibold tabular-nums">${fmtUSD(t.p50)}</span></div><div class="flex items-center justify-between text-[10px] text-muted"><span>10–90%</span><span class="tabular-nums">${fmtUSD(t.p10)} – ${fmtUSD(t.p90)}</span></div></div>`; }).join('');
   const hist=(SERIES[current]&&SERIES[current].daily)?SERIES[current].daily.slice(-252):[];
   const labels=[], histLine=[], p10=[],p25=[],p50=[],p75=[],p90=[]; const pushNull=()=>{p10.push(null);p25.push(null);p50.push(null);p75.push(null);p90.push(null);};
@@ -1193,9 +1209,9 @@ function renderProjMC(){ const cv=el('projChart'); if(!cv) return; const t2=el('
 function renderProjCAGR(){ const cv=el('projChart'); if(!cv) return; const t2=el('projTk'); if(t2) t2.textContent='· '+current;
   const d=meta(current); const price=d.price; const cg=computeCAGR(current); const st=seriesStats(current);
   const basis=el('projBasis')?el('projBasis').value:'hist';
-  let cagr=null, srcTxt='';
+  const divY=(d.divYield||0)/100; let cagr=null, srcTxt='';
   if(basis==='analyst' && d.analystAvg && price>0){ cagr=(d.analystAvg/price)-1; srcTxt='implied by analyst 1-yr target'; }
-  if(cagr==null && cg){ cagr=cg.cagr; srcTxt=cg.years.toFixed(1)+'y price history'; }
+  if(cagr==null && cg){ cagr=cg.cagr; srcTxt=cg.years.toFixed(1)+'y history'; if(divY>0){ cagr+=divY; srcTxt+=` + ${(divY*100).toFixed(1)}% dividend = total return`; } }
   const cgEl=el('projCagr'), winEl=el('projWindow'), tbl=el('projTable');
   if(cagr==null){ if(cgEl){cgEl.textContent='—';cgEl.style.color='';} if(winEl) winEl.textContent='needs more price history'; if(tbl) tbl.innerHTML=''; killChart('proj'); return; }
   cagr=Math.max(-0.5,Math.min(1.0,cagr)); // sanity clamp on extreme rates
@@ -1222,12 +1238,26 @@ function renderProjCAGR(){ const cv=el('projChart'); if(!cv) return; const t2=el
   ];
   charts.proj=_C(el('projChart'),{type:'line',data:{labels,datasets:ds},options:opts});
 }
+/* Data-confidence for a score: how complete/real the underlying inputs are. */
+function scoreConfidence(r,sym){ let pts=0,max=0; const notes=[];
+  const fp=Object.values(r.factors).filter(v=>v!=null).length; pts+=fp; max+=6; if(fp<6) notes.push((6-fp)+' factor(s) missing data');
+  const hasSeries=SERIES[sym]&&SERIES[sym].daily&&SERIES[sym].daily.length>120; max+=2; pts+=hasSeries?2:0; if(!hasSeries) notes.push('limited price history');
+  const hasFund=(METRICS[sym]||(FUND[sym]&&FUND[sym].ratios&&Object.keys(FUND[sym].ratios).length)); max+=1; pts+=hasFund?1:0; if(!hasFund) notes.push('fundamentals unavailable');
+  const hasPeers=PEERMET[sym]&&PEERMET[sym].group&&PEERMET[sym].group.length>=3; max+=1; pts+=hasPeers?1:0; if(!hasPeers) notes.push('no peer comparison');
+  if(r.momLite){ pts-=1; notes.push('momentum on 52-wk proxy — open the stock to load full history'); }
+  if(r.cashEst){ pts-=0.5; notes.push('cashflow estimated from margins'); }
+  const pct=Math.max(0,Math.min(100,Math.round(pts/max*100)));
+  return { level: pct>=80?'High':(pct>=55?'Medium':'Low'), pct, notes }; }
 function renderScoreCard(){ const big=el('scoreBig'); if(!big) return; const tkEl=el('scoreTk'); if(tkEl) tkEl.textContent='· '+current;
   const r=scoreStock(current); const rt=r.rating; const rr=el('scoreRating'), fx=el('scoreFactors');
+  const d0=meta(current); const conf=scoreConfidence(r,current); const cEl=el('scoreConf');
+  if(cEl){ const col=conf.level==='High'?'#22d3c5':(conf.level==='Medium'?'#f5b53d':'#e8709a'); cEl.textContent=conf.level+' confidence'; cEl.style.color=col; cEl.style.borderColor=col+'66'; cEl.title=conf.notes.length?('Why: '+conf.notes.join(' · ')):'All key inputs present'; }
+  const wEl=el('scoreWarn'); if(wEl){ if(d0.suspect){ wEl.textContent='⚠ Live price looks off ('+(d0.suspectReason||'failed sanity check')+') — the data source may have returned a bad quote. Refresh or cross-check before acting.'; wEl.classList.remove('hidden'); } else { wEl.classList.add('hidden'); wEl.textContent=''; } }
   if(r.composite==null){ big.textContent='—'; big.style.color=''; if(rr){rr.textContent='loading…';rr.style.color='';} if(fx) fx.innerHTML=''; return; }
   big.textContent=r.composite; big.style.color=rt.color; if(rr){ rr.textContent=rt.label; rr.style.color=rt.color; }
   const F=[['Momentum',r.factors.momentum,r.momLite?'proxy':''],['Fundamentals',r.factors.fundamentals,''],['Valuation',r.factors.valuation,''],['Catalysts',r.factors.catalysts,''],['Risk',r.factors.risk,''],['Cashflow',r.factors.cashflow,r.cashEst?'est':'']];
   if(fx) fx.innerHTML=F.map(([name,v,tag])=>{ const c=scoreColor(v); return `<div class="min-w-0"><span class="text-[10px] uppercase tracking-wide text-muted">${name}</span><p class="text-sm font-bold tabular-nums mt-0.5" style="color:${v!=null?c:'#8a90b0'}">${v!=null?v:'—'}${tag?`<span class="text-[8px] text-muted ml-0.5 uppercase">${tag}</span>`:''}</p>${segBar(v,c)}</div>`; }).join('');
+  const pe=el('scorePeer'); if(pe){ if(r.peer&&(r.peer.valPeer!=null||r.peer.fundPeer!=null)){ const parts=[]; if(r.peer.valPeer!=null) parts.push(`valuation ranks better than <b style="color:${scoreColor(r.peer.valPeer)}">${r.peer.valPeer}%</b>`); if(r.peer.fundPeer!=null) parts.push(`fundamentals better than <b style="color:${scoreColor(r.peer.fundPeer)}">${r.peer.fundPeer}%</b>`); pe.innerHTML=`Vs ${r.peer.n} sector peers: `+parts.join(' · ')+'. Valuation &amp; Fundamentals are now scored relative to peers, not fixed thresholds.'; } else pe.textContent=''; }
 }
 /* ----- watchlist heatmap ----- */
 function heatColor(chg){ const x=Math.max(-4,Math.min(4,chg))/4; // clamp ±4%
@@ -1669,6 +1699,9 @@ function fillSectors(){ const sel=el('fSector'); if(!sel||!Array.isArray(UNIV)) 
    =================================================================== */
 const SCORE_W={momentum:0.18,fundamentals:0.20,valuation:0.17,catalysts:0.13,risk:0.17,cashflow:0.15};
 function clampN(v,a,b){ return Math.min(Math.max(v,a),b); }
+/* percentile of val within arr (0..100). higherBetter=false for cheaper-is-better multiples. */
+function pctile(val,arr,higherBetter){ const v=(arr||[]).filter(x=>x!=null&&isFinite(x)); if(val==null||!isFinite(val)||v.length<3) return null;
+  let better=0; for(const x of v){ if(higherBetter? val>=x : val<=x) better++; } return better/v.length*100; }
 function seriesStats(sym){ const s=SERIES[sym]; if(!s||!s.daily||s.daily.length<30) return null;
   const c=s.daily.map(b=>b.c); const n=c.length; const ret=(k)=> n>k?(c[n-1]/c[n-1-k]-1):null;
   const rets=[]; for(let i=1;i<c.length;i++) rets.push(c[i]/c[i-1]-1);
@@ -1743,10 +1776,22 @@ function scoreStock(sym){
       if(fps!=null){ if(eps!=null&&eps>0){ const conv=fps/eps; s2+=conv>=0.8?8:(conv<0.4?-8:2); } else { s2+=fps>0?6:-12; } a2=true; }
       if(a2) cash=clampN(s2,2,99); }
     if(cash==null&&f.profitMargin!=null){ cash=clampN(45+clampN((f.profitMargin-8)*0.8,-15,20),2,99); cashEst=true; } }
+  // ── Peer-relative blend: rank valuation & fundamentals vs sector peers so the
+  //    scores are sector-fair instead of using fixed thresholds. ──
+  let peer=null; const pm=PEERMET[sym]&&PEERMET[sym].group;
+  if(pm&&pm.length>=3){ const col=(k)=>pm.map(x=>x[k]); const me=pm.find(x=>x.sym===sym)||{};
+    const vps=[pctile(me.pe,col('pe'),false),pctile(me.priceToBook,col('priceToBook'),false),pctile(me.peg,col('peg'),false),pctile(me.fcfYield,col('fcfYield'),true)].filter(x=>x!=null);
+    const fps=[pctile(me.netMargin,col('netMargin'),true),pctile(me.roe,col('roe'),true),pctile(me.grossMargin,col('grossMargin'),true),pctile(me.operatingMargin,col('operatingMargin'),true),pctile(me.revenueGrowth,col('revenueGrowth'),true)].filter(x=>x!=null);
+    const valPeer=vps.length?vps.reduce((a,b)=>a+b,0)/vps.length:null;
+    const fundPeer=fps.length?fps.reduce((a,b)=>a+b,0)/fps.length:null;
+    if(valPeer!=null) val=(val!=null)?0.5*val+0.5*valPeer:valPeer;
+    if(fundPeer!=null) fund=(fund!=null)?0.5*fund+0.5*fundPeer:fundPeer;
+    peer={valPeer:valPeer!=null?Math.round(valPeer):null, fundPeer:fundPeer!=null?Math.round(fundPeer):null, n:pm.length-1};
+  }
   const factors={momentum:mom,fundamentals:fund,valuation:val,catalysts:cat,risk:risk,cashflow:cash};
   let sum=0,wsum=0; for(const k in factors){ if(factors[k]!=null){ sum+=factors[k]*SCORE_W[k]; wsum+=SCORE_W[k]; factors[k]=Math.round(factors[k]); } }
   const composite=wsum?Math.round(sum/wsum):null;
-  return {sym,composite,factors,rating:ratingFor(composite),momLite,cashEst,upside:up}; }
+  return {sym,composite,factors,rating:ratingFor(composite),momLite,cashEst,upside:up,peer}; }
 function ratingFor(v){ if(v==null) return {label:'—',color:'#8a90b0'}; if(v>=82) return {label:'Strong Buy',color:'#16c784'}; if(v>=70) return {label:'Buy',color:'#22d3c5'}; if(v>=58) return {label:'Hold',color:'#f5b53d'}; if(v>=45) return {label:'Reduce',color:'#fb923c'}; return {label:'Sell',color:'#e838c8'}; }
 function scoreColor(v){ if(v==null) return '#8a90b0'; if(v>=80) return '#16c784'; if(v>=68) return '#22d3c5'; if(v>=55) return '#f5b53d'; if(v>=40) return '#fb923c'; return '#e838c8'; }
 function segBar(v,c){ const n=v==null?0:Math.max(0,Math.min(10,Math.round(v/10))); let h=''; for(let i=0;i<10;i++) h+=`<span class="inline-block h-1.5 flex-1 rounded-[1px]" style="background:${i<n?c:'#2a2e4a'}"></span>`; return `<div class="flex gap-[2px] mt-1">${h}</div>`; }
@@ -1769,7 +1814,39 @@ function rankCard(r,rank){ const d=meta(r.sym); const rt=r.rating;
     <div class="flex-1 p-4 grid grid-cols-3 sm:grid-cols-6 gap-x-4 gap-y-3 items-start">${facHTML}</div>
     <div class="px-4 hidden xl:flex items-center">${spk}</div>
   </div>`; }
-function paintRank(){ const box=el('rankList'); if(!box) return;
+/* ---------- Signal validation: does momentum predict forward returns? ---------- */
+function spearmanIC(x,y){ const n=x.length; if(n<12) return null;
+  const rank=(arr)=>{ const idx=arr.map((v,i)=>[v,i]).sort((a,b)=>a[0]-b[0]); const r=Array(arr.length); idx.forEach((p,i)=>{r[p[1]]=i;}); return r; };
+  const rx=rank(x), ry=rank(y); const m=(n-1)/2; let cov=0,vx=0,vy=0; for(let i=0;i<n;i++){ const a=rx[i]-m,b=ry[i]-m; cov+=a*b; vx+=a*a; vy+=b*b; } return (vx&&vy)?cov/Math.sqrt(vx*vy):0; }
+function renderSignalValidation(){ const box=el('signalVal'); if(!box) return;
+  const series=WATCH.map(t=>SERIES[t]&&SERIES[t].daily).filter(a=>a&&a.length>320);
+  if(series.length<1){ box.innerHTML='<p class="text-muted text-xs py-1">Open a few watchlist stocks (or let the ranking load) so their price history is available, then this measures whether the momentum signal has predicted returns.</p>'; return; }
+  const lookbacks=[[21,'1-month'],[63,'3-month'],[126,'6-month'],[252,'12-month']]; const fwd=63, step=5;
+  const data=lookbacks.map(()=>({sig:[],ret:[]}));
+  series.forEach(a=>{ const c=a.map(b=>b.c); for(let t=252;t+fwd<c.length;t+=step){ const fr=c[t+fwd]/c[t]-1; lookbacks.forEach((L,k)=>{ const lb=L[0]; if(t-lb>=0){ data[k].sig.push(c[t]/c[t-lb]-1); data[k].ret.push(fr); } }); } });
+  const rows=lookbacks.map((L,k)=>({name:L[1], ic:spearmanIC(data[k].sig,data[k].ret), n:data[k].sig.length}));
+  const valid=rows.filter(r=>r.ic!=null);
+  if(!valid.length){ box.innerHTML='<p class="text-muted text-xs py-1">Not enough overlapping history yet.</p>'; return; }
+  const best=valid.slice().sort((a,b)=>b.ic-a.ic)[0];
+  // top vs bottom tertile forward return for the best lookback
+  const bk=lookbacks.findIndex(L=>L[1]===best.name); const pairs=data[bk].sig.map((s,i)=>[s,data[bk].ret[i]]).sort((a,b)=>a[0]-b[0]);
+  const t3=Math.floor(pairs.length/3); const bot=pairs.slice(0,t3), top=pairs.slice(-t3);
+  const avg=(arr)=>arr.reduce((a,b)=>a+b[1],0)/arr.length; const topR=avg(top)*100, botR=avg(bot)*100; const spread=topR-botR;
+  const hit=top.filter(p=>p[1]>0).length/top.length*100;
+  const icColor=(v)=>v>=0.08?'#22d3c5':(v>=0.03?'#f5b53d':(v<=-0.03?'#e838c8':'#8a90b0'));
+  const verdict = best.ic>=0.08 ? 'Momentum has had real predictive power here'
+    : best.ic>=0.03 ? 'Momentum has had mild predictive power here'
+    : best.ic<=-0.03 ? 'Momentum has been contrarian (mean-reverting) here'
+    : 'Momentum has shown little predictive power here';
+  box.innerHTML=`
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">${rows.map(r=>`<div class="rounded-xl bg-panel/50 border ${r.name===best.name?'border-teal/40':'border-stroke'} p-3 text-center"><p class="text-[10px] text-muted uppercase">${r.name} mom.</p><p class="text-lg font-bold tabular-nums" style="color:${r.ic==null?'#8a90b0':icColor(r.ic)}">${r.ic==null?'—':(r.ic>=0?'+':'')+r.ic.toFixed(2)}</p><p class="text-[9px] text-muted">IC</p></div>`).join('')}</div>
+    <div class="rounded-xl bg-panel/40 border border-stroke p-3">
+      <p class="text-sm font-semibold" style="color:${icColor(best.ic)}">${verdict}.</p>
+      <p class="text-xs text-muted mt-1">Best signal: <b>${best.name} momentum</b> (information coefficient ${best.ic>=0?'+':''}${best.ic.toFixed(2)}). Over the next 3 months, the top third by that signal returned <b class="${topR>=0?'text-teal':'text-magenta'}">${topR>=0?'+':''}${topR.toFixed(1)}%</b> on average vs <b class="${botR>=0?'text-teal':'text-magenta'}">${botR>=0?'+':''}${botR.toFixed(1)}%</b> for the bottom third — a <b>${spread>=0?'+':''}${spread.toFixed(1)}%</b> spread, ${hit.toFixed(0)}% of the top third positive. Sample: ${best.n.toLocaleString()} observations across ${series.length} name(s).</p>
+    </div>
+    <p class="text-[11px] text-muted mt-3">IC is the rank correlation between the signal and the next 3-month return: 0 = no skill, +0.05 is meaningful in practice, higher is better. This validates the <b>price/momentum</b> part of the score — the only part reconstructable from free historical data. Fundamentals, valuation and sentiment are current snapshots and can't be back-tested here without paid point-in-time data. Use the best-IC window above as a guide to how much to trust momentum for these names.</p>`;
+}
+function paintRank(){ const box=el('rankList'); if(!box) return; renderSignalValidation();
   if(!WATCH.length){ box.innerHTML='<p class="text-muted text-sm py-4">Your watchlist is empty — add tickers to rank them.</p>'; return; }
   const scored=WATCH.map(scoreStock).filter(x=>x.composite!=null).sort((a,b)=>b.composite-a.composite);
   if(!scored.length){ box.innerHTML='<p class="text-muted text-sm py-4">Gathering data… scores appear as fundamentals load.</p>'; return; }

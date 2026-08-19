@@ -109,6 +109,25 @@ app.get('/api/insiders/:symbol', wrap(async (req, res) => res.json(await finnhub
 app.get('/api/metrics/:symbol', wrap(async (req, res) => res.json(await finnhub.metrics(req.params.symbol))));
 app.get('/api/sentiment/:symbol', wrap(async (req, res) => res.json(await news.getSentiment(req.params.symbol))));
 app.get('/api/peers/:symbol', wrap(async (req, res) => res.json(await finnhub.peers(req.params.symbol))));
+
+// Peer group key metrics for relative (percentile) scoring. The stock itself is
+// included as the first entry. Metrics are Finnhub-cached, so this is cheap.
+const _peerMetCache = new Map();
+app.get('/api/peer-metrics/:symbol', wrap(async (req, res) => {
+  const sym = req.params.symbol.toUpperCase();
+  const hit = _peerMetCache.get(sym);
+  if (hit && Date.now() - hit.t < 3600000) return res.json(hit.v);
+  let peers = [];
+  try { peers = await finnhub.peers(sym); } catch (e) {}
+  const syms = [sym, ...peers.filter((p) => p && p.toUpperCase() !== sym)].slice(0, 12);
+  const group = (await Promise.all(syms.map(async (s) => {
+    try { const m = await finnhub.metrics(s); return { sym: s, pe: m.pe, priceToBook: m.priceToBook, peg: m.peg, fcfYield: m.fcfYield, netMargin: m.netMargin, roe: m.roe, grossMargin: m.grossMargin, operatingMargin: m.operatingMargin, revenueGrowth: m.revenueGrowth }; }
+    catch (e) { return null; }
+  }))).filter(Boolean);
+  const v = { symbol: sym, group };
+  _peerMetCache.set(sym, { t: Date.now(), v });
+  res.json(v);
+}));
 app.get('/api/economic', wrap(async (req, res) => res.json(await finnhub.economicCalendar())));
 
 // Sector performance via the 11 SPDR sector ETFs (Finnhub quotes, 60/min).

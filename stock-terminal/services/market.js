@@ -209,10 +209,21 @@ async function getQuote(symbol) {
     } catch (e) { if (is429(e)) yahooCooldownUntil = Date.now() + 120000; }
 
     const change = (base.price != null && base.prevClose != null) ? base.price - base.prevClose : null;
+    // ── Sanity cross-check (no extra API calls): catch grossly wrong quotes
+    //    (e.g. a mis-resolved foreign listing) by testing the live price against
+    //    the previous close and the 52-week range. ──
+    let suspect = false, suspectReason = null;
+    const px = base.price, pc = base.prevClose, hi = base.high52, lo = base.low52;
+    if (px != null) {
+      if (pc != null && pc > 0 && Math.abs(px - pc) / pc > 0.35) { suspect = true; suspectReason = `${((px - pc) / pc * 100).toFixed(0)}% vs prev close`; }
+      if (hi != null && lo != null && hi > lo && (px > hi * 1.6 || px < lo * 0.5)) { suspect = true; suspectReason = 'outside 52-week range'; }
+    }
+    if (suspect) dbg('SUSPECT quote ' + symbol + ' via ' + src + ' px=' + px + ' (' + suspectReason + ')');
     return {
       symbol, sector, ...base,
       change, changePct: (change != null && base.prevClose) ? (change / base.prevClose) * 100 : null,
       beta, divYield, targetMean, recommendationKey: recKey, recommendationMean: recMean,
+      source: src, suspect, suspectReason,
     };
   });
 }
