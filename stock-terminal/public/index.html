@@ -249,6 +249,12 @@
           </div>
         </div>
         <div class="card rounded-2xl p-5 fade-in">
+          <div class="flex items-center justify-between mb-4"><div class="flex items-center gap-2"><h3 class="font-semibold">Latest Earnings</h3><span id="earnRepTk" class="text-[11px] text-muted"></span></div><span id="earnRepDate" class="text-[11px] text-muted border border-stroke rounded-md px-2 py-0.5">REPORT</span></div>
+          <div id="earnRepBadges" class="grid grid-cols-1 sm:grid-cols-3 gap-3"></div>
+          <div id="earnRepHist" class="mt-4 pt-3 border-t border-stroke"></div>
+          <p class="text-[11px] text-muted mt-3">EPS vs analyst consensus and revenue vs estimate are live from Finnhub. Company forward <b>guidance</b> isn't available on the free data tier — shown as n/a below.</p>
+        </div>
+        <div class="card rounded-2xl p-5 fade-in">
           <div class="flex items-center justify-between mb-4"><div class="flex items-center gap-2"><h3 class="font-semibold">Fair Value &amp; Blended Target</h3><span id="fvTk" class="text-[11px] text-muted"></span></div><span class="text-[11px] text-muted border border-stroke rounded-md px-2 py-0.5">1-YR</span></div>
           <div class="flex flex-col lg:flex-row gap-6">
             <div class="lg:w-56 shrink-0">
@@ -790,7 +796,7 @@ let liveTimer=null;
 /* =====================================================================
    REAL-DATA ADAPTER — talks to the backend API, falls back to simulation
    ===================================================================== */
-const FUND={}, NEWS={}, FILINGS={}, EARN={}, REC={}, INS={}, SENT={}, PEERS={}, METRICS={}, REAL=new Set();
+const FUND={}, NEWS={}, FILINGS={}, EARN={}, REC={}, INS={}, SENT={}, PEERS={}, METRICS={}, EREP={}, REAL=new Set();
 let BACKEND=true; // flips false if the API is unreachable (opened as a bare file)
 
 async function api(pathStr, tries=3){ let last;
@@ -839,6 +845,7 @@ async function fetchFundamentals(sym){ if(!BACKEND||FUND[sym]) return; try{ FUND
 async function fetchNewsFilings(sym){ if(!BACKEND) return; try{ NEWS[sym]=await api('/api/news/'+sym); }catch(e){} try{ FILINGS[sym]=await api('/api/filings/'+sym); }catch(e){} }
 async function fetchExtras(sym){ if(!BACKEND) return; // earnings, rec trend, insiders, sentiment, peers (Finnhub)
   try{ EARN[sym]=await api('/api/earnings/'+sym); }catch(e){}
+  try{ EREP[sym]=await api('/api/earnings-report/'+sym); }catch(e){}
   try{ REC[sym]=await api('/api/recommendations/'+sym); }catch(e){}
   try{ INS[sym]=await api('/api/insiders/'+sym); }catch(e){}
   try{ SENT[sym]=await api('/api/sentiment/'+sym); }catch(e){}
@@ -1073,9 +1080,30 @@ function renderDashboard(){
   renderOverviewChart();
   renderHeatmap();
   renderScoreCard();
+  renderEarningsReport();
   renderFairValue();
   renderProjection();
   renderDashNews();
+}
+function renderEarningsReport(){ const bx=el('earnRepBadges'); if(!bx) return; const tkEl=el('earnRepTk'); if(tkEl) tkEl.textContent='· '+current; const dtEl=el('earnRepDate'); const hEl=el('earnRepHist');
+  if(!BACKEND){ bx.innerHTML='<p class="text-muted text-xs col-span-full py-1">Connect the backend for earnings data.</p>'; if(hEl) hEl.innerHTML=''; if(dtEl) dtEl.textContent='REPORT'; return; }
+  const rep=EREP[current];
+  if(rep===undefined){ bx.innerHTML='<p class="text-muted text-xs col-span-full py-1">Loading earnings…</p>'; return; }
+  const L=rep&&rep.latest;
+  if(!L){ bx.innerHTML='<p class="text-muted text-xs col-span-full py-1">No recent earnings report found for '+current+'.</p>'; if(hEl) hEl.innerHTML=''; if(dtEl) dtEl.textContent='REPORT'; return; }
+  if(dtEl){ const d=L.date?new Date(L.date+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):''; dtEl.textContent=(L.quarter&&L.year?('Q'+L.quarter+' '+L.year+' · '):'')+(d||'—'); }
+  const badge=(label,beat,actual,est,pct,fmtFn)=>{ let cls,txt,col;
+    if(beat==null){ cls='border-stroke'; txt='N/A'; col='#8a90b0'; } else if(beat){ cls='border-teal/40'; txt='BEAT'; col='#22d3c5'; } else { cls='border-magenta/40'; txt='MISS'; col='#e838c8'; }
+    const sub=(actual!=null&&est!=null)?`${fmtFn(actual)} vs est ${fmtFn(est)}`:'no data';
+    const big=beat==null?'—':(pct!=null?(pct>=0?'+':'')+pct.toFixed(1)+'%':txt);
+    return `<div class="rounded-xl bg-panel/50 border ${cls} p-3"><div class="flex items-center justify-between"><span class="text-[11px] text-muted">${label}</span><span class="text-[10px] font-bold px-1.5 py-0.5 rounded" style="background:${col}22;color:${col}">${txt}</span></div><p class="text-base font-bold mt-1 tabular-nums" style="color:${col}">${big}</p><p class="text-[10px] text-muted mt-0.5">${sub}</p></div>`; };
+  bx.innerHTML = badge('EPS vs Consensus', L.beatEps, L.epsActual, L.epsEstimate, L.epsSurprisePct, (v)=>fmtUSD(v))
+    + badge('Revenue vs Est.', L.beatRev, L.revenueActual, L.revenueEstimate, L.revSurprisePct, (v)=>fmtCap(v))
+    + `<div class="rounded-xl bg-panel/50 border border-stroke p-3"><div class="flex items-center justify-between"><span class="text-[11px] text-muted">Guidance</span><span class="text-[10px] font-bold px-1.5 py-0.5 rounded text-muted" style="background:#8a90b022">N/A</span></div><p class="text-base font-bold mt-1 text-muted">—</p><p class="text-[10px] text-muted mt-0.5">not on free data tier</p></div>`;
+  if(hEl){ const H=(rep.history||[]).slice().reverse();
+    if(!H.length){ hEl.innerHTML='<p class="text-[10px] text-muted">No surprise history available.</p>'; }
+    else hEl.innerHTML='<p class="text-[10px] uppercase tracking-wide text-muted mb-2">EPS surprise · last quarters</p><div class="flex items-end gap-2 flex-wrap">'+H.map(q=>{ const b=q.beat; const col=b==null?'#3a3f60':(b?'#22d3c5':'#e838c8'); const p=q.surprisePct; return `<div class="flex flex-col items-center gap-1" title="${q.period}${q.epsActual!=null?' · EPS '+fmtUSD(q.epsActual):''}"><span class="text-[9px] tabular-nums" style="color:${col}">${p!=null?(p>=0?'+':'')+p.toFixed(0)+'%':''}</span><span class="h-7 w-7 rounded grid place-items-center text-[11px] font-bold" style="background:${col}22;color:${col}">${b==null?'–':(b?'✓':'✕')}</span><span class="text-[8px] text-muted">${(q.period||'').slice(0,7)}</span></div>`; }).join('')+'</div>';
+  }
 }
 const dashNewsFetching=new Set();
 function renderDashNews(){ const box=el('dashNews'); if(!box) return; const t=el('dashNewsTk'); if(t) t.textContent='· '+current;

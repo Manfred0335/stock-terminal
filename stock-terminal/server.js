@@ -101,6 +101,7 @@ app.get('/api/watchquotes', wrap(async (req, res) => {
 
 // Earnings countdown, analyst recommendation trend, insider transactions.
 app.get('/api/earnings/:symbol', wrap(async (req, res) => res.json(await finnhub.earnings(req.params.symbol))));
+app.get('/api/earnings-report/:symbol', wrap(async (req, res) => res.json(await finnhub.earningsReport(req.params.symbol))));
 app.get('/api/recommendations/:symbol', wrap(async (req, res) => res.json(await finnhub.recommendations(req.params.symbol))));
 app.get('/api/insiders/:symbol', wrap(async (req, res) => res.json(await finnhub.insiders(req.params.symbol))));
 // Fast Finnhub-only key metrics (margins, ROE, FCF, growth) for the AI ranking —

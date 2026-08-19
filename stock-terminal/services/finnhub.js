@@ -111,6 +111,36 @@ async function earnings(symbol) {
   });
 }
 
+/* Latest reported quarter — did they beat consensus EPS and estimated revenue?
+   Uses the past earnings calendar (eps/revenue actual vs estimate) plus the
+   /stock/earnings surprise history for a multi-quarter beat/miss strip. */
+async function earningsReport(symbol) {
+  if (!FH_KEY) return null;
+  return cached('erep:' + symbol, 1800000, async () => {
+    const fmt = (d) => d.toISOString().slice(0, 10);
+    const [cal, hist] = await Promise.all([
+      fhGet(`/calendar/earnings?symbol=${encodeURIComponent(symbol)}&from=${fmt(new Date(Date.now() - 220 * 864e5))}&to=${fmt(new Date())}`).catch(() => null),
+      fhGet(`/stock/earnings?symbol=${encodeURIComponent(symbol)}`).catch(() => null),
+    ]);
+    const list = (((cal && cal.earningsCalendar) || []).filter((e) => e.epsActual != null || e.revenueActual != null)).sort((a, b) => new Date(b.date) - new Date(a.date));
+    const H = Array.isArray(hist) ? hist.slice(0, 6).map((e) => ({ period: e.period, epsActual: n(e.actual), epsEstimate: n(e.estimate), surprisePct: n(e.surprisePercent), beat: (n(e.actual) != null && n(e.estimate) != null) ? e.actual >= e.estimate : null })) : [];
+    let latest = null;
+    const c = list[0];
+    if (c) {
+      const epsA = n(c.epsActual), epsE = n(c.epsEstimate), revA = n(c.revenueActual), revE = n(c.revenueEstimate);
+      latest = {
+        date: c.date, quarter: c.quarter, year: c.year, hour: c.hour || null,
+        epsActual: epsA, epsEstimate: epsE, epsSurprisePct: (epsA != null && epsE) ? (epsA - epsE) / Math.abs(epsE) * 100 : null, beatEps: (epsA != null && epsE != null) ? epsA >= epsE : null,
+        revenueActual: revA, revenueEstimate: revE, revSurprisePct: (revA != null && revE) ? (revA - revE) / Math.abs(revE) * 100 : null, beatRev: (revA != null && revE != null) ? revA >= revE : null,
+      };
+    } else if (H.length) {
+      const h = H[0];
+      latest = { date: h.period, epsActual: h.epsActual, epsEstimate: h.epsEstimate, epsSurprisePct: h.surprisePct, beatEps: h.beat, revenueActual: null, revenueEstimate: null, revSurprisePct: null, beatRev: null };
+    }
+    return { latest, history: H };
+  });
+}
+
 /* Analyst recommendation trend (real buy/hold/sell over recent periods). Cached 1h. */
 async function recommendations(symbol) {
   if (!FH_KEY) return [];
@@ -171,4 +201,4 @@ async function economicCalendar() {
   });
 }
 
-module.exports = { hasKey, quote, metrics, indexQuotes, news, earnings, recommendations, insiders, newsSentiment, peers, economicCalendar, FH_KEY };
+module.exports = { hasKey, quote, metrics, indexQuotes, news, earnings, earningsReport, recommendations, insiders, newsSentiment, peers, economicCalendar, FH_KEY };
